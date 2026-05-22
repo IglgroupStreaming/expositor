@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StreamCounter V1 (Pro Rundown)</title>
+    
+    <!-- LIBRERÍAS (Motor V5/V39 Stable) -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/mqtt@4.3.7/dist/mqtt.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;800&family=Inter:wght@400;700;900&display=swap');
+        
+        /* BASE */
+        html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; font-family: 'Inter', sans-serif; background: transparent; }
+        
+        /* MODOS */
+        body.dashboard-mode { background-color: #0f172a !important; color: white; overflow-y: auto !important; }
+        body.overlay-mode { background-color: transparent !important; }
+
+        /* DIAGNÓSTICO */
+        #loading-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 9999; }
+
+        /* --- ESTILOS OVERLAY --- */
+
+        /* 1. BROADCAST STYLE (Zócalo TV) */
+        .style-broadcast {
+            position: absolute; bottom: 80px; left: 50px;
+            background: rgba(15, 23, 42, 0.95);
+            border-radius: 12px;
+            display: flex; overflow: hidden;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+            border: 1px solid rgba(255,255,255,0.1);
+            animation: slideUp 0.5s;
+            min-width: 400px;
+        }
+        .bc-status { width: 10px; background: #3b82f6; }
+        .bc-status.overrun { background: #ef4444; animation: flash 1s infinite; }
+        .bc-content { padding: 15px 25px; flex: 1; }
+        .bc-label { font-size: 0.8rem; text-transform: uppercase; color: #94a3b8; font-weight: bold; letter-spacing: 1px; }
+        .bc-title { font-size: 1.5rem; font-weight: 800; color: white; line-height: 1.1; margin-bottom: 5px; }
+        .bc-timer { font-family: 'JetBrains Mono', monospace; font-size: 2.5rem; font-weight: 800; line-height: 1; color: white; text-align: right; }
+        .bc-timer.danger { color: #facc15; }
+        .bc-timer.over { color: #ef4444; }
+
+        /* 2. MONITOR STYLE (Para el Orador/Escenario) */
+        .style-monitor {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: black; display: flex; flex-direction: column; justify-content: center; align-items: center;
+            text-align: center;
+        }
+        .mon-title { font-size: 4vw; color: #94a3b8; font-weight: bold; text-transform: uppercase; margin-bottom: 20px; }
+        .mon-timer { font-family: 'JetBrains Mono', monospace; font-size: 25vw; line-height: 1; font-weight: 800; color: #22c55e; }
+        .mon-timer.warn { color: #facc15; }
+        .mon-timer.over { color: #ef4444; animation: pulse 1s infinite; }
+        .mon-next { font-size: 2vw; color: #64748b; margin-top: 40px; }
+        .mon-bar-bg { width: 80%; height: 20px; background: #333; margin-top: 20px; border-radius: 10px; overflow: hidden; }
+        .mon-bar-fill { height: 100%; background: #22c55e; transition: width 1s linear; }
+
+        /* 3. AGENDA LIST (Próximos) */
+        .style-agenda {
+            position: absolute; top: 100px; left: 50px;
+            display: flex; flex-direction: column; gap: 10px;
+            animation: fadeIn 0.5s;
+        }
+        .ag-item { padding: 15px 25px; background: rgba(0,0,0,0.8); color: #94a3b8; border-left: 4px solid #333; backdrop-filter: blur(5px); font-weight: bold; transition: 0.3s; }
+        .ag-item.active { background: rgba(59, 130, 246, 0.9); color: white; border-left: 6px solid #facc15; transform: scale(1.05) translateX(10px); box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        .ag-time { font-family: 'JetBrains Mono', monospace; float: right; margin-left: 20px; }
+
+        @keyframes slideUp { from { transform: translateY(100px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes flash { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.02); } 100% { transform: scale(1); } }
+
+        /* DASHBOARD UI */
+        .glass-panel { background: #1e293b; border: 1px solid #334155; padding: 20px; border-radius: 12px; display: flex; flex-direction: column; }
+        .input-dark { background: #0f172a; border: 1px solid #334155; padding: 10px; color: white; border-radius: 6px; width: 100%; outline: none; }
+        .btn { padding: 10px; border-radius: 6px; font-weight: bold; cursor: pointer; border: none; text-transform: uppercase; font-size: 0.8rem; transition: 0.2s; }
+        .btn-blue { background: #3b82f6; color: white; }
+        .btn-green { background: #22c55e; color: black; }
+        .btn-red { background: #ef4444; color: white; }
+        .btn-gray { background: #334155; color: white; }
+        
+        .segment-item { display: flex; align-items: center; padding: 10px; background: #0f172a; border-bottom: 1px solid #334155; cursor: pointer; transition: 0.2s; }
+        .segment-item:hover { background: #1e293b; }
+        .segment-item.active { border-left: 4px solid #3b82f6; background: rgba(59, 130, 246, 0.1); }
+        .segment-item.done { opacity: 0.5; text-decoration: line-through; }
+    </style>
+</head>
+<body>
+    <div id="loading-screen">
+        <h2 style="font-size: 24px; font-weight: bold; margin-bottom: 10px;">CARGANDO COUNTER...</h2>
+    </div>
+    <div id="root"></div>
+
+    <script>
+        // Ocultar loader al cargar
+        window.onload = () => document.getElementById('loading-screen').style.display = 'none';
+        // Auto-detectar modo para fondo
+        if(window.location.search.includes('mode=overlay')) document.body.classList.add('overlay-mode');
+        else document.body.classList.add('dashboard-mode');
+    </script>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const MQTT_CONFIG = { host: 'broker.emqx.io', port: 8084, path: '/mqtt' };
+        
+        // ID de Sesión
+        const getSessionId = () => {
+            const p = new URLSearchParams(window.location.search);
+            if (p.get('id')) return p.get('id');
+            let id = localStorage.getItem('cnt_v1_id');
+            if (!id) { id = 'cnt_' + Math.floor(Math.random() * 100000); localStorage.setItem('cnt_v1_id', id); }
+            return id;
+        };
+        const SESSION_ID = getSessionId();
+
+        // Datos Iniciales
+        const initialSegments = [
+            { id: 1, title: "Inicio de Transmisión", duration: 5, status: "pending" },
+            { id: 2, title: "Bienvenida CEO", duration: 10, status: "pending" },
+            { id: 3, title: "Presentación Producto", duration: 20, status: "pending" },
+            { id: 4, title: "Break / Café", duration: 15, status: "pending" },
+            { id: 5, title: "Cierre", duration: 5, status: "pending" }
+        ];
+
+        // --- MOTOR ---
+        const useEngine = (mode) => {
+            const [segments, setSegments] = useState(initialSegments);
+            const [currentIdx, setCurrentIdx] = useState(0);
+            const [timerState, setTimerState] = useState({ 
+                running: false, 
+                startTime: null, 
+                pausedAt: null, 
+                durationMs: 5 * 60000 
+            });
+            const [style, setStyle] = useState('broadcast');
+            const [visible, setVisible] = useState(false);
+            const [status, setStatus] = useState('Offline');
+            
+            const client = useRef(null);
+
+            useEffect(() => {
+                const c = mqtt.connect(`wss://${MQTT_CONFIG.host}:${MQTT_CONFIG.port}${MQTT_CONFIG.path}`, { clientId: `cli_${mode}_${Math.random().toString(16).slice(2)}` });
+                
+                c.on('connect', () => {
+                    setStatus('Online');
+                    if (mode === 'overlay') c.subscribe(`sc_count/${SESSION_ID}`);
+                });
+
+                c.on('message', (t, msg) => {
+                    if (mode === 'overlay') {
+                        const d = JSON.parse(msg.toString());
+                        setSegments(d.segments);
+                        setCurrentIdx(d.currentIdx);
+                        setTimerState(d.timerState);
+                        setStyle(d.style);
+                        setVisible(d.visible);
+                    }
+                });
+                client.current = c;
+                return () => c.end();
+            }, [mode]);
+
+            const publish = (newSegments, newIdx, newTimer, newStyle, newVisible) => {
+                // Actualizar local
+                setSegments(newSegments);
+                setCurrentIdx(newIdx);
+                setTimerState(newTimer);
+                setStyle(newStyle);
+                setVisible(newVisible);
+
+                if (client.current?.connected) {
+                    client.current.publish(`sc_count/${SESSION_ID}`, JSON.stringify({
+                        segments: newSegments, currentIdx: newIdx, timerState: newTimer, style: newStyle, visible: newVisible
+                    }), { retain: true });
+                }
+            };
+
+            return { segments, currentIdx, timerState, style, visible, publish, status };
+        };
+
+        // --- LÓGICA DE TIEMPO COMPARTIDA ---
+        const useCountdown = (timerState) => {
+            const [display, setDisplay] = useState("00:00");
+            const [isOverrun, setIsOverrun] = useState(false);
+            const [progress, setProgress] = useState(0); // 0 a 100
+
+            useEffect(() => {
+                const tick = () => {
+                    if (!timerState.startTime && !timerState.pausedAt) {
+                        // Estado inicial o reset
+                        const totalSec = Math.floor(timerState.durationMs / 1000);
+                        const m = Math.floor(totalSec / 60).toString().padStart(2, '0');
+                        const s = (totalSec % 60).toString().padStart(2, '0');
+                        setDisplay(`${m}:${s}`);
+                        setProgress(0);
+                        setIsOverrun(false);
+                        return;
+                    }
+
+                    const now = timerState.running ? Date.now() : timerState.pausedAt;
+                    const elapsed = now - timerState.startTime;
+                    const remaining = timerState.durationMs - elapsed;
+
+                    if (remaining >= 0) {
+                        // Tiempo Normal
+                        setIsOverrun(false);
+                        const m = Math.floor(remaining / 60000).toString().padStart(2, '0');
+                        const s = Math.floor((remaining % 60000) / 1000).toString().padStart(2, '0');
+                        setDisplay(`${m}:${s}`);
+                        setProgress((elapsed / timerState.durationMs) * 100);
+                    } else {
+                        // Overrun (Tiempo negativo)
+                        setIsOverrun(true);
+                        const over = Math.abs(remaining);
+                        const m = Math.floor(over / 60000).toString().padStart(2, '0');
+                        const s = Math.floor((over % 60000) / 1000).toString().padStart(2, '0');
+                        setDisplay(`+${m}:${s}`);
+                        setProgress(100);
+                    }
+                };
+
+                tick();
+                const i = setInterval(tick, 200);
+                return () => clearInterval(i);
+            }, [timerState]);
+
+            return { display, isOverrun, progress };
+        };
+
+        // --- OVERLAY ---
+        const Overlay = ({ segments, currentIdx, timerState, style, visible }) => {
+            if (!visible) return null;
+            const current = segments[currentIdx] || { title: "Fin", duration: 0 };
+            const next = segments[currentIdx + 1] || null;
+            const { display, isOverrun, progress } = useCountdown(timerState);
+
+            // 1. BROADCAST
+            if (style === 'broadcast') {
+                return (
+                    <div className="style-broadcast">
+                        <div className={`bc-status ${isOverrun ? 'overrun' : ''}`}></div>
+                        <div className="bc-content">
+                            <div className="flex justify-between items-center">
+                                <div>
+                                    <div className="bc-label">{isOverrun ? 'TIEMPO EXCEDIDO' : 'EN VIVO AHORA'}</div>
+                                    <div className="bc-title">{current.title}</div>
+                                </div>
+                                <div className={`bc-timer ${isOverrun ? 'over' : (progress > 80 ? 'danger' : '')}`}>
+                                    {display}
+                                </div>
+                            </div>
+                            <div className="w-full h-1 bg-gray-700 mt-2 rounded overflow-hidden">
+                                <div className={`h-full ${isOverrun?'bg-red-500':'bg-blue-500'}`} style={{width: `${Math.min(progress, 100)}%`}}></div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            // 2. MONITOR (Grande)
+            if (style === 'monitor') {
+                return (
+                    <div className="style-monitor">
+                        <div className="mon-title">{current.title}</div>
+                        <div className={`mon-timer ${isOverrun ? 'over' : (progress > 80 ? 'warn' : '')}`}>{display}</div>
+                        <div className="mon-bar-bg"><div className="mon-bar-fill" style={{width: `${Math.min(progress, 100)}%`, background: isOverrun?'red': (progress>80?'yellow':'#22c55e')}}></div></div>
+                        {next && <div className="mon-next">SIGUIENTE: {next.title.toUpperCase()} ({next.duration}m)</div>}
+                        {isOverrun && <div className="text-red-500 text-4xl font-bold mt-4 animate-bounce">¡REDONDEAR!</div>}
+                    </div>
+                );
+            }
+
+            // 3. AGENDA
+            if (style === 'agenda') {
+                return (
+                    <div className="style-agenda">
+                        {segments.map((s, i) => (
+                            <div key={i} className={`ag-item ${i === currentIdx ? 'active' : ''}`} style={{opacity: i < currentIdx ? 0.5 : 1}}>
+                                {s.title} 
+                                <span className="ag-time">{i === currentIdx ? display : s.duration + 'm'}</span>
+                            </div>
+                        ))}
+                    </div>
+                );
+            }
+        };
+
+        // --- DASHBOARD ---
+        const Dashboard = ({ segments, currentIdx, timerState, style, visible, publish, status }) => {
+            // Estado local para edición
+            const [newTitle, setNewTitle] = useState("");
+            const [newDur, setNewDur] = useState(5);
+            const { display, isOverrun } = useCountdown(timerState);
+
+            const obsUrl = `${window.location.href.split('?')[0]}?mode=overlay&id=${SESSION_ID}`;
+
+            // Control de Timer
+            const play = () => {
+                const now = Date.now();
+                if (timerState.pausedAt) {
+                    // Resume: adjust start time
+                    const diff = now - timerState.pausedAt;
+                    publish(segments, currentIdx, { ...timerState, running: true, startTime: timerState.startTime + diff, pausedAt: null }, style, visible);
+                } else {
+                    // Start fresh
+                    const durationMs = segments[currentIdx].duration * 60000;
+                    publish(segments, currentIdx, { running: true, startTime: now, pausedAt: null, durationMs }, style, true); // Auto-show on play
+                }
+            };
+
+            const pause = () => {
+                publish(segments, currentIdx, { ...timerState, running: false, pausedAt: Date.now() }, style, visible);
+            };
+
+            const reset = () => {
+                const durationMs = segments[currentIdx].duration * 60000;
+                publish(segments, currentIdx, { running: false, startTime: null, pausedAt: null, durationMs }, style, visible);
+            };
+
+            const selectSegment = (idx) => {
+                const durationMs = segments[idx].duration * 60000;
+                publish(segments, idx, { running: false, startTime: null, pausedAt: null, durationMs }, style, visible);
+            };
+
+            const nextSegment = () => {
+                if (currentIdx < segments.length - 1) selectSegment(currentIdx + 1);
+            };
+
+            const addSegment = () => {
+                if (!newTitle) return;
+                const newS = { id: Date.now(), title: newTitle, duration: parseFloat(newDur), status: 'pending' };
+                publish([...segments, newS], currentIdx, timerState, style, visible);
+                setNewTitle("");
+            };
+
+            const deleteSegment = (idx) => {
+                if (idx === currentIdx) return alert("No puedes borrar el segmento activo");
+                const newS = segments.filter((_, i) => i !== idx);
+                // Ajustar índice si borramos uno anterior
+                const newIdx = idx < currentIdx ? currentIdx - 1 : currentIdx;
+                publish(newS, newIdx, timerState, style, visible);
+            };
+
+            const copyLink = (type) => {
+                const url = `${obsUrl}${type !== 'master' ? '&style='+type : ''}`;
+                navigator.clipboard.writeText(url);
+                alert("URL Copiada");
+            }
+
+            return (
+                <div className="max-w-6xl mx-auto p-4 grid grid-cols-1 md:grid-cols-2 gap-6 h-screen pb-20">
+                    
+                    {/* PANEL IZQUIERDO: RUNDOWN */}
+                    <div className="glass-panel h-full overflow-hidden">
+                        <div className="flex justify-between items-center mb-4 pb-2 border-b border-gray-700">
+                            <h2 className="text-xl font-bold text-gray-200">ESCALETA ({segments.length})</h2>
+                            <button className="btn btn-gray w-auto" onClick={addSegment}>+</button>
+                        </div>
+
+                        <div className="overflow-y-auto flex-1 pr-1 space-y-1">
+                            {segments.map((seg, i) => (
+                                <div key={seg.id} 
+                                     onClick={() => selectSegment(i)}
+                                     className={`segment-item ${i === currentIdx ? 'active' : ''} ${i < currentIdx ? 'done' : ''}`}
+                                >
+                                    <div className="font-mono text-gray-500 mr-3 w-6">{i+1}.</div>
+                                    <div className="flex-1 font-bold">{seg.title}</div>
+                                    <div className="text-sm bg-gray-800 px-2 py-1 rounded">{seg.duration}m</div>
+                                    <button className="text-red-500 ml-2 hover:text-red-300" onClick={(e)=>{e.stopPropagation(); deleteSegment(i)}}>x</button>
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="mt-4 pt-4 border-t border-gray-700">
+                            <div className="flex gap-2">
+                                <input className="input-dark" placeholder="Nuevo Bloque" value={newTitle} onChange={e=>setNewTitle(e.target.value)} />
+                                <input className="input-dark w-20" type="number" placeholder="Min" value={newDur} onChange={e=>setNewDur(e.target.value)} />
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* PANEL DERECHO: CONTROL */}
+                    <div className="glass-panel">
+                        <div className="flex justify-between items-center mb-6">
+                            <h1 className="text-2xl font-black text-blue-400">STREAM<span className="text-white">COUNTER</span></h1>
+                            <div className={`text-xs px-2 py-1 rounded ${status==='Online'?'bg-green-900 text-green-200':'bg-red-900 text-red-200'}`}>{status}</div>
+                        </div>
+
+                        {/* BIG TIMER DISPLAY */}
+                        <div className={`text-center py-6 rounded-xl mb-6 border-2 ${isOverrun ? 'bg-red-900/20 border-red-500' : 'bg-slate-800 border-slate-600'}`}>
+                            <div className="text-gray-400 text-sm font-bold uppercase tracking-widest mb-1">EN CURSO ({currentIdx+1}/{segments.length})</div>
+                            <div className="text-2xl font-bold text-white mb-2">{segments[currentIdx]?.title}</div>
+                            <div className={`text-6xl font-mono font-black ${isOverrun ? 'text-red-500 animate-pulse' : 'text-white'}`}>
+                                {display}
+                            </div>
+                        </div>
+
+                        {/* CONTROLES */}
+                        <div className="grid grid-cols-2 gap-4 mb-6">
+                            {timerState.running ? 
+                                <button className="btn btn-gray" onClick={pause}>II PAUSAR</button> :
+                                <button className="btn btn-green" onClick={play}>▶ INICIAR</button>
+                            }
+                            <button className="btn btn-red" onClick={reset}>↺ REINICIAR</button>
+                            <button className="btn btn-blue col-span-2" onClick={nextSegment}>SIGUIENTE BLOQUE ⏭</button>
+                        </div>
+
+                        <hr className="border-gray-700 mb-6"/>
+
+                        {/* ESTILO Y SALIDA */}
+                        <label className="text-xs text-gray-500 font-bold mb-2 block">FORMATO DE SALIDA</label>
+                        <div className="flex gap-2 mb-4">
+                            <button className={`btn ${style==='broadcast'?'btn-blue':'btn-gray'}`} onClick={()=>publish(segments, currentIdx, timerState, 'broadcast', visible)}>TV</button>
+                            <button className={`btn ${style==='monitor'?'btn-blue':'btn-gray'}`} onClick={()=>publish(segments, currentIdx, timerState, 'monitor', visible)}>MONITOR</button>
+                            <button className={`btn ${style==='agenda'?'btn-blue':'btn-gray'}`} onClick={()=>publish(segments, currentIdx, timerState, 'agenda', visible)}>LISTA</button>
+                        </div>
+
+                        <button className={`btn w-full mb-4 ${visible ? 'btn-red' : 'btn-green'}`} onClick={()=>publish(segments, currentIdx, timerState, style, !visible)}>
+                            {visible ? 'OCULTAR OVERLAY' : 'MOSTRAR OVERLAY'}
+                        </button>
+
+                        <div className="flex justify-between items-center text-xs text-gray-500 mt-auto">
+                            <span>Links Individuales:</span>
+                            <div className="flex gap-2">
+                                <button className="text-blue-400 hover:underline" onClick={()=>copyLink('broadcast')}>TV</button>
+                                <button className="text-blue-400 hover:underline" onClick={()=>copyLink('monitor')}>Monitor</button>
+                                <button className="bg-slate-700 px-2 py-1 rounded text-white" onClick={()=>navigator.clipboard.writeText(obsUrl)}>Master</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [mode, setMode] = useState(null);
+            const { segments, currentIdx, timerState, style, visible, publish, status } = useEngine('dashboard');
+            const overlayEngine = useEngine('overlay');
+
+            useEffect(() => {
+                const params = new URLSearchParams(window.location.search);
+                const m = params.get('mode') === 'overlay' ? 'overlay' : 'dashboard';
+                setMode(m);
+                document.body.className = m === 'overlay' ? 'overlay-mode' : 'dashboard-mode';
+            }, []);
+
+            if (!mode) return null;
+            if (mode === 'overlay') {
+                // Permitir forzar estilo por URL
+                const params = new URLSearchParams(window.location.search);
+                const forcedStyle = params.get('style');
+                const finalStyle = forcedStyle || overlayEngine.style;
+                
+                return <Overlay 
+                    segments={overlayEngine.segments} 
+                    currentIdx={overlayEngine.currentIdx} 
+                    timerState={overlayEngine.timerState} 
+                    style={finalStyle} 
+                    visible={overlayEngine.visible} 
+                />;
+            }
+            return <Dashboard segments={segments} currentIdx={currentIdx} timerState={timerState} style={style} visible={visible} publish={publish} status={status} />;
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
